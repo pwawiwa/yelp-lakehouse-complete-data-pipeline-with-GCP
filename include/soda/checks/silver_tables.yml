@@ -1,0 +1,21 @@
+checks for reviews:
+  - row_count > 0
+  - missing_count(review_id) = 0
+  - missing_count(user_id) = 0
+  - missing_count(business_id) = 0
+  - invalid_count(stars) = 0:
+      valid values: [1, 2, 3, 4, 5]
+  - freshness(_ingested_at) < 24h
+
+checks for businesses:
+  - row_count > 0
+  - missing_count(business_id) = 0
+  - schema:
+      warn:
+        when required column missing: [business_id, name, address, city]
+  - freshness(_ingested_at) < 24h
+
+checks for users:
+  - row_count > 0
+  - missing_count(user_id) = 0
+  - freshness(_ingested_at) < 24h

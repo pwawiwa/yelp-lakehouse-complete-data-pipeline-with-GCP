@@ -1,0 +1,5 @@
+data_source silver_bq:
+  type: bigquery
+  project_id: ${GCP_PROJECT_ID}
+  dataset: ${BQ_SILVER_DATASET}
+# Relying on Application Default Credentials (GCP ADC)
