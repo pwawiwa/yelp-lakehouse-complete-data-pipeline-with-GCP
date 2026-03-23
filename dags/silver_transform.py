@@ -35,7 +35,12 @@ SILVER_DATASETS = {entity: Dataset(f"silver_{entity}") for entity in YELP_ENTITI
     schedule=BRONZE_DATASETS,
     start_date=datetime(2024, 1, 1),
     description="Transform Bronze → Silver: dedup, clean, PII mask, partition",
-    tags=["silver", "transform", "pii", *dag_config["tags"]],
+    template_searchpath=["/usr/local/airflow/include/sql/silver"],
+    user_defined_macros={
+        "project_id": GCP_PROJECT_ID,
+        "bronze_dataset": BQ_BRONZE_DATASET,
+        "silver_dataset": BQ_SILVER_DATASET,
+    },
     **{k: v for k, v in dag_config.items() if k != "tags"},
 )
 def silver_transform():
@@ -70,13 +75,13 @@ def silver_transform():
         task_id="create_silver_tables",
         configuration={
             "query": {
-                "query": open(
-                    "/usr/local/airflow/include/sql/silver/create_silver_tables.sql"
-                ).read()
-                .replace("{{ project_id }}", GCP_PROJECT_ID)
-                .replace("{{ silver_dataset }}", BQ_SILVER_DATASET),
+                "query": "create_silver_tables.sql",
                 "useLegacySql": False,
             }
+        },
+        params={
+            "project_id": GCP_PROJECT_ID,
+            "silver_dataset": BQ_SILVER_DATASET,
         },
         project_id=GCP_PROJECT_ID,
         location=GCP_REGION,
@@ -89,14 +94,14 @@ def silver_transform():
             task_id="dedup_and_load_reviews",
             configuration={
                 "query": {
-                    "query": open(
-                        "/usr/local/airflow/include/sql/silver/transform_reviews.sql"
-                    ).read()
-                    .replace("{{ project_id }}", GCP_PROJECT_ID)
-                    .replace("{{ bronze_dataset }}", BQ_BRONZE_DATASET)
-                    .replace("{{ silver_dataset }}", BQ_SILVER_DATASET),
+                    "query": "transform_reviews.sql",
                     "useLegacySql": False,
                 }
+            },
+            params={
+                "project_id": GCP_PROJECT_ID,
+                "bronze_dataset": BQ_BRONZE_DATASET,
+                "silver_dataset": BQ_SILVER_DATASET,
             },
             project_id=GCP_PROJECT_ID,
             location=GCP_REGION,
@@ -122,14 +127,14 @@ def silver_transform():
             task_id="scd2_merge_businesses",
             configuration={
                 "query": {
-                    "query": open(
-                        "/usr/local/airflow/include/sql/silver/transform_businesses.sql"
-                    ).read()
-                    .replace("{{ project_id }}", GCP_PROJECT_ID)
-                    .replace("{{ bronze_dataset }}", BQ_BRONZE_DATASET)
-                    .replace("{{ silver_dataset }}", BQ_SILVER_DATASET),
+                    "query": "transform_businesses.sql",
                     "useLegacySql": False,
                 }
+            },
+            params={
+                "project_id": GCP_PROJECT_ID,
+                "bronze_dataset": BQ_BRONZE_DATASET,
+                "silver_dataset": BQ_SILVER_DATASET,
             },
             project_id=GCP_PROJECT_ID,
             location=GCP_REGION,
@@ -142,14 +147,14 @@ def silver_transform():
             task_id="scd2_merge_users",
             configuration={
                 "query": {
-                    "query": open(
-                        "/usr/local/airflow/include/sql/silver/transform_users.sql"
-                    ).read()
-                    .replace("{{ project_id }}", GCP_PROJECT_ID)
-                    .replace("{{ bronze_dataset }}", BQ_BRONZE_DATASET)
-                    .replace("{{ silver_dataset }}", BQ_SILVER_DATASET),
+                    "query": "transform_users.sql",
                     "useLegacySql": False,
                 }
+            },
+            params={
+                "project_id": GCP_PROJECT_ID,
+                "bronze_dataset": BQ_BRONZE_DATASET,
+                "silver_dataset": BQ_SILVER_DATASET,
             },
             project_id=GCP_PROJECT_ID,
             location=GCP_REGION,

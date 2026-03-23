@@ -18,7 +18,6 @@ from dags.common.dag_config import (
     dag_config,
     GCP_PROJECT_ID,
     GCP_REGION,
-    GCS_STAGING_BUCKET,
     BQ_SILVER_DATASET,
     YELP_ENTITIES,
 )
