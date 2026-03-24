@@ -1,10 +1,9 @@
 -- ─────────────────────────────────────────────────────────────────────
--- FAANG-Level Business Transformation (SCD Type 2)
--- Optimized with Single-Pass MERGE and Hash-Diff Change Detection
+-- FAANG-Level Business Transformation (SCD Type 2) - IDEMPOTENT VERSION
+-- Optimized with Single-Pass MERGE, Hash-Diff, and Re-run Safety
 -- ─────────────────────────────────────────────────────────────────────
 
 -- Step 1: Create local stage with hash_diff and deduplication
--- This ensures GCS Bronze JSON is scanned exactly ONCE.
 CREATE OR REPLACE TEMP TABLE stage_business AS
 SELECT
     *,
@@ -16,37 +15,51 @@ SELECT
         categories
     ))) AS hash_diff
 FROM (
+    -- Ordering by name is okay, but ideally use an ingestion timestamp if available
     SELECT *, ROW_NUMBER() OVER (PARTITION BY business_id ORDER BY name) AS _rn
     FROM `{{ project_id }}.{{ bronze_dataset }}.business`
 )
 WHERE _rn = 1;
 
 -- Step 2: Single-Pass SCD Type 2 MERGE
--- Handles both record expiration and new version insertion
+-- Uses a single variable for timestamps to ensure timeline alignment
+DECLARE processing_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
+
 MERGE INTO `{{ project_id }}.{{ silver_dataset }}.businesses` AS target
 USING (
     -- Data for "INACTIVATE" old records
+    -- Matches against the target to set is_current = FALSE
     SELECT business_id, hash_diff, 'UPDATE' AS _action, s.* EXCEPT(business_id, hash_diff)
     FROM stage_business s
+
     UNION ALL
+
     -- Data for "INSERT" new/changed records
+    -- CRITICAL FIX: The WHERE NOT EXISTS ensures we don't insert if the 
+    -- current active record in Silver already matches this hash.
     SELECT business_id, hash_diff, 'INSERT' AS _action, s.* EXCEPT(business_id, hash_diff)
     FROM stage_business s
+    WHERE NOT EXISTS (
+        SELECT 1 
+        FROM `{{ project_id }}.{{ silver_dataset }}.businesses` t
+        WHERE t.business_id = s.business_id 
+          AND t.hash_diff = s.hash_diff 
+          AND t.is_current = TRUE
+    )
 ) AS source
--- Join on Business ID and Current flag
 ON target.business_id = source.business_id 
    AND target.is_current = TRUE
-   -- Optimization: Use the source action to distinguish
    AND source._action = 'UPDATE'
 
 -- 1. Expire existing rows where attributes changed
-WHEN MATCHED AND IFNULL(target.hash_diff, -1) != source.hash_diff THEN
+-- If hashes are equal, this block is skipped (Idempotency)
+WHEN MATCHED AND target.hash_diff != source.hash_diff THEN
     UPDATE SET
         is_current = FALSE,
-        valid_to   = CURRENT_TIMESTAMP(),
-        _processed_at = CURRENT_TIMESTAMP()
+        valid_to   = processing_time,
+        _processed_at = processing_time
 
--- 2. Insert new versions (both brand new IDs and changed versions)
+-- 2. Insert new versions (Only if they passed the NOT EXISTS filter)
 WHEN NOT MATCHED BY TARGET AND source._action = 'INSERT' THEN
     INSERT (
         business_id, name, address, city, state, postal_code,
@@ -63,11 +76,11 @@ WHEN NOT MATCHED BY TARGET AND source._action = 'INSERT' THEN
         SAFE_CAST(source.is_open AS INT64),
         source.categories, TO_JSON_STRING(source.attributes), TO_JSON_STRING(source.hours),
         TRUE,                           -- is_current
-        CURRENT_TIMESTAMP(),            -- valid_from
+        processing_time,                -- valid_from
         TIMESTAMP('9999-12-31'),        -- valid_to
         source.hash_diff,
-        CURRENT_TIMESTAMP(),
+        processing_time,
         'bronze_external_table',
         1,
-        CURRENT_TIMESTAMP()
+        processing_time
     );

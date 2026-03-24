@@ -6,12 +6,15 @@ CREATE OR REPLACE PROCEDURE `{{ project_id }}.{{ silver_dataset }}.sp_upsert_bus
 BEGIN
     /*
     -- ─────────────────────────────────────────────────────────────────────
-    -- FAANG-Level Stored Procedure for Business Transformation (SCD2)
-    -- Optimized with Single-Pass MERGE and Hash-Diff Change Detection
+    -- FAANG-Level Stored Procedure for Business Transformation (SCD 2)
+    -- Optimized with Single-Pass MERGE, Hash-Diff, and Re-run Safety
     -- ─────────────────────────────────────────────────────────────────────
     */
 
-    -- Step 1: Create local stage with hash_diff and deduplication
+    -- Step 1: Use a static timestamp for the batch to ensure consistency
+    DECLARE processing_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
+
+    -- Step 2: Create local stage with hash_diff and deduplication
     CREATE OR REPLACE TEMP TABLE stage_business AS
     SELECT
         *,
@@ -28,29 +31,40 @@ BEGIN
     )
     WHERE _rn = 1;
 
-    -- Step 2: Single-Pass SCD Type 2 MERGE
+    -- Step 3: Single-Pass SCD Type 2 MERGE
+    -- Handles both record expiration and new version insertion
     MERGE INTO `{{ project_id }}.{{ silver_dataset }}.businesses` AS target
     USING (
-        -- Data for "INACTIVATE" old records
+        -- Action 1: UPDATE (To expire old records)
         SELECT business_id, hash_diff, 'UPDATE' AS _action, s.* EXCEPT(business_id, hash_diff)
         FROM stage_business s
+        
         UNION ALL
-        -- Data for "INSERT" new/changed records
+        
+        -- Action 2: INSERT (Only if it's actually a NEW business or a CHANGE in data)
         SELECT business_id, hash_diff, 'INSERT' AS _action, s.* EXCEPT(business_id, hash_diff)
         FROM stage_business s
+        WHERE NOT EXISTS (
+            SELECT 1 
+            FROM `{{ project_id }}.{{ silver_dataset }}.businesses` t
+            WHERE t.business_id = s.business_id 
+              AND t.hash_diff = s.hash_diff 
+              AND t.is_current = TRUE
+        )
     ) AS source
     ON target.business_id = source.business_id 
        AND target.is_current = TRUE
        AND source._action = 'UPDATE'
 
     -- 1. Expire existing rows where attributes changed
-    WHEN MATCHED AND IFNULL(target.hash_diff, -1) != source.hash_diff THEN
+    -- If hashes are equal, this block is skipped (Idempotency)
+    WHEN MATCHED AND target.hash_diff != source.hash_diff THEN
         UPDATE SET
             is_current = FALSE,
-            valid_to   = CURRENT_TIMESTAMP(),
-            _processed_at = CURRENT_TIMESTAMP()
+            valid_to   = processing_time,
+            _processed_at = processing_time
 
-    -- 2. Insert new versions (both brand new IDs and changed versions)
+    -- 2. Insert new versions (Only if they passed the NOT EXISTS filter)
     WHEN NOT MATCHED BY TARGET AND source._action = 'INSERT' THEN
         INSERT (
             business_id, name, address, city, state, postal_code,
@@ -67,12 +81,12 @@ BEGIN
             SAFE_CAST(source.is_open AS INT64),
             source.categories, TO_JSON_STRING(source.attributes), TO_JSON_STRING(source.hours),
             TRUE,                           -- is_current
-            CURRENT_TIMESTAMP(),            -- valid_from
+            processing_time,                -- valid_from
             TIMESTAMP('9999-12-31'),        -- valid_to
             source.hash_diff,
-            CURRENT_TIMESTAMP(),
+            processing_time,
             'bronze_external_table',
             1,
-            CURRENT_TIMESTAMP()
+            processing_time
         );
 END;
