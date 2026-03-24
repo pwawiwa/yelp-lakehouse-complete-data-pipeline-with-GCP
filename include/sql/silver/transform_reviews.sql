@@ -36,8 +36,6 @@ USING (
     WHERE _rn = 1
 ) AS source
 ON target.review_id = source.review_id
-   -- Partition Pruning (Assuming the table is partitioned by 'date')
-   AND target.date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) 
 
 -- If the review exists, update the metrics (useful/funny/cool) which change over time
 WHEN MATCHED THEN
@@ -55,11 +53,11 @@ WHEN NOT MATCHED THEN
     INSERT (
         review_id, user_id, business_id, stars, useful, funny, cool,
         text, word_count, char_length, exclamation_count, 
-        date, _ingested_at, _processed_at
+        date, _ingested_at, _source_file, _schema_version, _processed_at
     )
     VALUES (
         source.review_id, source.user_id, source.business_id, source.stars, 
         source.useful, source.funny, source.cool, source.clean_text, 
         source.word_count, source.char_length, source.exclamation_count,
-        source.review_date, source._ingested_at, processing_time
+        source.review_date, source._ingested_at, 'bronze_external_table', 1, processing_time
     );

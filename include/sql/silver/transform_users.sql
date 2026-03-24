@@ -3,6 +3,9 @@
 -- Optimized for PII Compliance and Single-Pass MERGE
 -- ─────────────────────────────────────────────────────────────────────
 
+-- Step 0: Set a unified processing timestamp (Must be at the start)
+DECLARE processing_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
+
 -- Step 1: Create local stage with hash_diff and deduplication
 CREATE OR REPLACE TEMP TABLE stage_user AS
 SELECT
@@ -14,16 +17,13 @@ SELECT
 FROM (
     SELECT 
         *, 
-        -- Deduplicate: Take the latest record based on yelping_since or ingestion time
-        ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY yelping_since DESC) AS _rn
+        -- Deduplication: Use review_count as a proxy for the latest update
+        ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY review_count DESC, yelping_since DESC) AS _rn
     FROM `{{ project_id }}.{{ bronze_dataset }}.user`
 )
 WHERE _rn = 1;
 
--- Step 2: Set a unified processing timestamp
-DECLARE processing_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
-
--- Step 3: Single-Pass SCD Type 2 MERGE
+-- Step 2: Single-Pass SCD Type 2 MERGE
 MERGE INTO `{{ project_id }}.{{ silver_dataset }}.users` AS target
 USING (
     -- Action 1: UPDATE (To expire old records)
@@ -37,7 +37,7 @@ USING (
     FROM stage_user s
     WHERE NOT EXISTS (
         SELECT 1 FROM `{{ project_id }}.{{ silver_dataset }}.users` t
-        WHERE t.user_id = s.user_id 
+        WHERE TRIM(t.user_id) = TRIM(s.user_id) 
           AND t.hash_diff = s.hash_diff 
           AND t.is_current = TRUE
     )
@@ -63,8 +63,12 @@ WHEN NOT MATCHED BY TARGET AND source._action = 'INSERT' THEN
     )
     VALUES (
         source.user_id,
-        -- PII Masking: Redact name to first initial for privacy compliance
-        IF(LENGTH(source.name) > 0, CONCAT(LEFT(source.name, 1), '.'), 'Anonymous'),
+        -- PII Masking: Redact name while preserving first initial and name length for readability
+        COALESCE(
+            IF(LENGTH(source.name) > 0, 
+               CONCAT(LEFT(source.name, 1), REPEAT('*', GREATEST(0, LENGTH(source.name) - 1))), 
+               'Anonymous'),
+            'Anonymous'),
         SAFE_CAST(source.review_count AS INT64),
         SAFE_CAST(source.yelping_since AS DATE),
         SAFE_CAST(source.useful AS INT64),

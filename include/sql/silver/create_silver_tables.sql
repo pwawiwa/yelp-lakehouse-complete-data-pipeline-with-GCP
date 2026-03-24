@@ -11,12 +11,15 @@ CREATE TABLE IF NOT EXISTS `{{ project_id }}.{{ silver_dataset }}.reviews` (
     useful          INT64,
     funny           INT64,
     cool            INT64,
-    text            STRING,           -- PII-masked via DLP
-    date            DATE,
-    _ingested_at    TIMESTAMP   NOT NULL,
-    _source_file    STRING,
-    _schema_version INT64       NOT NULL,
-    _processed_at   TIMESTAMP
+    text                STRING,           -- PII-masked via DLP
+    word_count          INT64,
+    char_length         INT64,
+    exclamation_count   INT64,
+    date                DATE,
+    _ingested_at        TIMESTAMP   NOT NULL,
+    _source_file        STRING,
+    _schema_version     INT64       NOT NULL,
+    _processed_at       TIMESTAMP
 )
 PARTITION BY DATE_TRUNC(date, MONTH)
 CLUSTER BY business_id, stars

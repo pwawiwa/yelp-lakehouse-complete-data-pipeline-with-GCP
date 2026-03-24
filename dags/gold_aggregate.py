@@ -1,13 +1,4 @@
-"""
-Gold Layer: Aggregation DAG.
-
-Triggered by Silver Datasets (data-aware scheduling).
-Creates business analytics aggregations, materialized views,
-and ML feature tables.
-"""
-
 from datetime import datetime
-
 from airflow.decorators import dag, task
 from airflow.datasets import Dataset
 from airflow.providers.google.cloud.operators.bigquery import (
@@ -15,52 +6,41 @@ from airflow.providers.google.cloud.operators.bigquery import (
     BigQueryInsertJobOperator,
 )
 
+# Configuration imports
 from dags.common.dag_config import (
-    dag_config,
     GCP_PROJECT_ID,
     GCP_REGION,
-    BQ_SILVER_DATASET,
     BQ_GOLD_DATASET,
-    YELP_ENTITIES,
+    BQ_SILVER_DATASET,
+    dag_config,
 )
 
-# ── Data-Aware Scheduling: Trigger on Validated Silver ─────────────
-VALIDATED_SILVER = [Dataset("validated_silver")]
-GOLD_DATASET = Dataset("gold_analytics")
+# ── Data-Aware Scheduling: Define Granular Upstream Datasets ────────
+# These must match exactly with silver_transform.py and data_validation.py
+SILVER_BUSINESSES = Dataset("silver_business")
+SILVER_REVIEWS = Dataset("silver_review")
+SILVER_USERS = Dataset("silver_user")
+VALIDATED_SILVER = Dataset("validated_silver")
 
-
-def _read_sql(filename: str) -> str:
-    """Read and template a SQL file."""
-    with open(f"/usr/local/airflow/include/sql/gold/{filename}") as f:
-        return (
-            f.read()
-            .replace("{{ project_id }}", GCP_PROJECT_ID)
-            .replace("{{ silver_dataset }}", BQ_SILVER_DATASET)
-            .replace("{{ gold_dataset }}", BQ_GOLD_DATASET)
-        )
-
+GOLD_COMPLETED = Dataset("gold_analytics")
 
 @dag(
-    dag_id="gold_aggregate",
-    schedule=VALIDATED_SILVER,
+    dag_id="gold_aggregate_v2",
+    # Trigger only after successful validation of Business, Reviews, and Users
+    schedule=(SILVER_BUSINESSES & SILVER_REVIEWS & SILVER_USERS & VALIDATED_SILVER),
     start_date=datetime(2024, 1, 1),
-    description="Aggregate Silver → Gold: business analytics, user engagement, ML features",
-    tags=["gold", "aggregation", "analytics", *dag_config["tags"]],
-    **{k: v for k, v in dag_config.items() if k != "tags"},
+    catchup=False,
+    template_searchpath="/usr/local/airflow/include/sql/gold/", # Allows native .sql file loading
+    user_defined_macros={
+        "project_id": GCP_PROJECT_ID,
+        "gold_dataset": BQ_GOLD_DATASET,
+        "silver_dataset": BQ_SILVER_DATASET,
+    },
+    tags=["gold", "analytics", "bigquery"],
 )
 def gold_aggregate():
-    """
-    ## Gold Aggregation Pipeline
 
-    Triggered automatically when Silver datasets are updated.
-
-    ### Aggregation Tables:
-    1. **Business Performance** — Stars, review trends, engagement scores
-    2. **User Engagement** — Activity metrics, elite analysis, user tiers
-    3. **City Analytics** — City-level BI dashboard metrics
-    4. **ML Features** — Feature table for star prediction model
-    """
-
+    # 1. Infrastructure Setup
     create_gold_dataset = BigQueryCreateEmptyDatasetOperator(
         task_id="create_gold_dataset",
         dataset_id=BQ_GOLD_DATASET,
@@ -69,70 +49,52 @@ def gold_aggregate():
         if_exists="ignore",
     )
 
+    # 2. Reusable Configuration for BigQuery Jobs
+    def get_bq_config(sql_file):
+        return {
+            "query": {
+                "query": sql_file, # Airflow will find this in template_searchpath
+                "useLegacySql": False,
+            },
+            "labels": {
+                "env": "prod",
+                "dag": "gold_aggregate",
+                "layer": "gold"
+            }
+        }
+
+    # 3. Parallel Aggregation Tasks
+    # Using template files directly is much faster for the scheduler
     agg_business = BigQueryInsertJobOperator(
         task_id="agg_business_performance",
-        configuration={
-            "query": {
-                "query": _read_sql("business_performance.sql"),
-                "useLegacySql": False,
-            }
-        },
-        project_id=GCP_PROJECT_ID,
-        location=GCP_REGION,
+        configuration=get_bq_config("business_performance.sql"),
+        do_xcom_push=False,
     )
 
     agg_users = BigQueryInsertJobOperator(
         task_id="agg_user_engagement",
-        configuration={
-            "query": {
-                "query": _read_sql("user_engagement.sql"),
-                "useLegacySql": False,
-            }
-        },
-        project_id=GCP_PROJECT_ID,
-        location=GCP_REGION,
+        configuration=get_bq_config("user_engagement.sql"),
+        do_xcom_push=False,
     )
 
     agg_city = BigQueryInsertJobOperator(
         task_id="agg_city_analytics",
-        configuration={
-            "query": {
-                "query": _read_sql("city_analytics.sql"),
-                "useLegacySql": False,
-            }
-        },
-        project_id=GCP_PROJECT_ID,
-        location=GCP_REGION,
+        configuration=get_bq_config("city_analytics.sql"),
+        do_xcom_push=False,
     )
 
-    build_ml_features = BigQueryInsertJobOperator(
+    agg_ml_features = BigQueryInsertJobOperator(
         task_id="build_ml_features",
-        configuration={
-            "query": {
-                "query": _read_sql("ml_features_star_prediction.sql"),
-                "useLegacySql": False,
-            }
-        },
-        project_id=GCP_PROJECT_ID,
-        location=GCP_REGION,
+        configuration=get_bq_config("ml_features_star_prediction.sql"),
+        do_xcom_push=False,
     )
 
-    @task(outlets=[GOLD_DATASET])
-    def mark_gold_complete() -> dict:
-        """Mark Gold dataset as updated for downstream consumers (ML pipeline)."""
-        return {
-            "status": "complete",
-            "timestamp": datetime.utcnow().isoformat(),
-            "tables_refreshed": [
-                "business_performance",
-                "user_engagement",
-                "city_analytics",
-                "ml_features_star_prediction",
-            ],
-        }
+    # 4. Outlets for Downstream Consumers (ML Training)
+    @task(outlets=[GOLD_COMPLETED])
+    def mark_gold_complete():
+        print("Gold layer successfully refreshed and ready for downstream consumption.")
 
-    # All aggregations run in parallel, then mark complete
-    create_gold_dataset >> [agg_business, agg_users, agg_city, build_ml_features] >> mark_gold_complete()
-
+    # ── DAG Dependency Graph ──────────────────────────────────────────
+    create_gold_dataset >> [agg_business, agg_users, agg_city, agg_ml_features] >> mark_gold_complete()
 
 gold_aggregate()

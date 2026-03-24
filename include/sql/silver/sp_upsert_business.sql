@@ -26,7 +26,8 @@ BEGIN
             categories
         ))) AS hash_diff
     FROM (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY business_id ORDER BY name) AS _rn
+        -- Deduplication: Use review_count as a proxy for the latest update
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY business_id ORDER BY review_count DESC, stars DESC) AS _rn
         FROM `{{ project_id }}.{{ bronze_dataset }}.business`
     )
     WHERE _rn = 1;
@@ -47,7 +48,7 @@ BEGIN
         WHERE NOT EXISTS (
             SELECT 1 
             FROM `{{ project_id }}.{{ silver_dataset }}.businesses` t
-            WHERE t.business_id = s.business_id 
+            WHERE TRIM(t.business_id) = TRIM(s.business_id) 
               AND t.hash_diff = s.hash_diff 
               AND t.is_current = TRUE
         )

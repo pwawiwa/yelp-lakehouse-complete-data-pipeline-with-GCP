@@ -36,15 +36,12 @@ A production-grade **Data Lakehouse ELT pipeline** on Google Cloud Platform usin
 |---------|---------------|
 | **Medallion Architecture** | Bronze (BigLake/GCS) → Silver → Gold (BigQuery) |
 | **Batch Ingestion** | Yelp JSON → GCS with BigLake External Tables |
-| **Stored Procedures** | Procedural SQL (`CALL sp_upsert_business`) |
-| **PII Handling** | GCP Sensitive Data Protection (DLP) + policy tags |
-| **Partitioned Tables** | Date/Month partitioning + clustering per entity |
-| **Schema Evolution** | `_schema_version` column + JSON flexibility |
-| **ML Pipeline** | BigQuery ML `CREATE MODEL` (3 models) |
-| **Data Validation** | Dataflow ParDo/DoFn DLQ + Soda-style checks |
-| **Alerting** | Email on failure + Cloud Monitoring (duration degradation) |
-| **JSON Treatment** | Nested JSON flattening, type coercion, safe parsing |
-| **Data-Aware Scheduling** | Airflow Datasets (Bronze → Silver → Gold → ML) |
+| **SCD Type 2** | Robust historical tracking with `hash_diff` & `is_current` |
+| **Stored Procedures** | Optimized BigQuery procedural SQL (`sp_upsert_business`) |
+| **PII Handling** | High-entropy masking (initial + asterisks) + DLP |
+| **Soda Data Quality** | `duplicate_count` & schema validation as a Gold Layer gate |
+| **Idempotency** | No lookback filters; safe for infinite re-runs |
+| **Data-Aware Scheduling** | Airflow Datasets (Silver → Validation → Gold → ML) |
 
 ## 📂 Project Structure
 
@@ -146,17 +143,21 @@ Access the Airflow UI at http://localhost:8080 (admin/admin).
 
 ### 5. Run the Pipeline
 
-The DAGs are connected via **data-aware scheduling**:
+The DAGs are connected via **Data-Aware Scheduling** to ensure a quality-gated flow:
 
-```
-bronze_lake_ingest → silver_transform → gold_aggregate → ml_training_pipeline
-                                                     └──→ data_validation
+```mermaid
+graph TD
+    B[bronze_lake_ingest] -->|Dataset| S[silver_transform]
+    S -->|Dataset: silver_entity| V[data_validation]
+    V -->|Dataset: validated_silver| G[gold_aggregate_v2]
+    G -->|Dataset: gold_analytics| M[ml_training_pipeline]
 ```
 
-1. Trigger `bronze_lake_ingest` manually
-2. `silver_transform` fires automatically when Bronze completes
-3. `gold_aggregate` fires when Silver completes
-4. `ml_training_pipeline` fires when Gold completes
+1. **Bronze**: Raw files are mapped to BigLake tables.
+2. **Silver**: Data is cleaned and deduplicated (SCD Type 2).
+3. **Validation**: **Soda Core** runs DQ checks (uniqueness, schema).
+4. **Gold**: Aggregations only run if validation passes.
+5. **ML**: Training triggers automatically when analytics tables refresh.
 
 ## 📊 ML Models (BigQuery ML)
 

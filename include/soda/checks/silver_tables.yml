@@ -3,6 +3,7 @@ checks for reviews:
   - missing_count(review_id) = 0
   - missing_count(user_id) = 0
   - missing_count(business_id) = 0
+  - duplicate_count(review_id) = 0
   - invalid_count(stars) = 0:
       valid values: [1, 2, 3, 4, 5]
   - freshness(_ingested_at) < 24h
@@ -14,8 +15,13 @@ checks for businesses:
       warn:
         when required column missing: [business_id, name, address, city]
   - freshness(_ingested_at) < 24h
+  # FAANG Requirement: No duplicates for the active record
+  - duplicate_count(business_id) = 0:
+      filter: is_current = TRUE
 
 checks for users:
   - row_count > 0
   - missing_count(user_id) = 0
   - freshness(_ingested_at) < 24h
+  - duplicate_count(user_id) = 0:
+      filter: is_current = TRUE

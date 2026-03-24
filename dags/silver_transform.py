@@ -85,6 +85,7 @@ def silver_transform():
         },
         project_id=GCP_PROJECT_ID,
         location=GCP_REGION,
+        do_xcom_push=False,
     )
 
     deploy_stored_procedures = BigQueryInsertJobOperator(
@@ -101,6 +102,7 @@ def silver_transform():
         },
         project_id=GCP_PROJECT_ID,
         location=GCP_REGION,
+        do_xcom_push=False,
     )
 
     # ── Transform Reviews ─────────────────────────────────────────
@@ -121,6 +123,7 @@ def silver_transform():
             },
             project_id=GCP_PROJECT_ID,
             location=GCP_REGION,
+            do_xcom_push=False,
         )
 
         @task()
@@ -149,6 +152,7 @@ def silver_transform():
             },
             project_id=GCP_PROJECT_ID,
             location=GCP_REGION,
+            do_xcom_push=False,
         )
 
     # ── Transform Users ───────────────────────────────────────────
@@ -169,6 +173,7 @@ def silver_transform():
             },
             project_id=GCP_PROJECT_ID,
             location=GCP_REGION,
+            do_xcom_push=False,
         )
 
         @task()
