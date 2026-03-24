@@ -1,4 +1,4 @@
-# 🏗️ Data Lakehouse ELT Pipeline — GCP + BigLake + BigQuery + Iceberg + Airflow (Astro)
+# 🏗️ Data Lakehouse ELT Pipeline — GCP + BigLake + BigQuery + Airflow (Astro)
 
 A production-grade **Data Lakehouse ELT pipeline** on Google Cloud Platform using the **Yelp Open Dataset**, orchestrated by **Airflow on Astronomer (Astro)**.
 
@@ -16,9 +16,9 @@ A production-grade **Data Lakehouse ELT pipeline** on Google Cloud Platform usin
            ▼                        ▼                        ▼
    ┌──────────────┐      ┌──────────────────┐     ┌──────────────────┐
    │ 🥉 BRONZE    │      │ 🥈 SILVER        │     │ 🥇 GOLD          │
-   │ GCS + Iceberg│ ───▶ │ BigQuery Native  │ ──▶ │ BigQuery + MVs   │
+   │ GCS + BigLake│ ───▶ │ BigQuery Native  │ ──▶ │ BigQuery + MVs   │
    │ Raw JSON     │      │ Partitioned      │     │ Aggregated       │
-   │ BigLake Ext. │      │ PII-Masked       │     │ ML Features      │
+   │ BigLake Ext. │      │ SCD Type 2       │     │ ML Features      │
    └──────────────┘      └──────────────────┘     └────────┬─────────┘
                                                            │
                             ┌──────────────────────────────┼────────┐
@@ -34,12 +34,12 @@ A production-grade **Data Lakehouse ELT pipeline** on Google Cloud Platform usin
 
 | Feature | Implementation |
 |---------|---------------|
-| **Medallion Architecture** | Bronze (Iceberg/GCS) → Silver → Gold (BigQuery) |
-| **Batch Ingestion** | Yelp JSON → GCS with dynamic task mapping |
-| **Apache Iceberg** | BigLake managed Iceberg tables on GCS |
+| **Medallion Architecture** | Bronze (BigLake/GCS) → Silver → Gold (BigQuery) |
+| **Batch Ingestion** | Yelp JSON → GCS with BigLake External Tables |
+| **Stored Procedures** | Procedural SQL (`CALL sp_upsert_business`) |
 | **PII Handling** | GCP Sensitive Data Protection (DLP) + policy tags |
 | **Partitioned Tables** | Date/Month partitioning + clustering per entity |
-| **Schema Evolution** | Auto-detect new columns, ALTER TABLE, type widening |
+| **Schema Evolution** | `_schema_version` column + JSON flexibility |
 | **ML Pipeline** | BigQuery ML `CREATE MODEL` (3 models) |
 | **Data Validation** | Dataflow ParDo/DoFn DLQ + Soda-style checks |
 | **Alerting** | Email on failure + Cloud Monitoring (duration degradation) |
@@ -56,8 +56,8 @@ A production-grade **Data Lakehouse ELT pipeline** on Google Cloud Platform usin
 ├── airflow_settings.yaml               # Connections, pools, variables
 │
 ├── dags/
-│   ├── bronze_batch_ingest.py          # 🥉 Batch ingest Yelp → GCS
-│   ├── silver_transform.py            # 🥈 Transform + PII masking
+│   ├── bronze_lake_ingest.py           # 🥉 BigLake external table creation
+│   ├── silver_transform.py            # 🥈 Transform + PII masking + SP Calls
 │   ├── gold_aggregate.py              # 🥇 Business analytics aggregations
 │   ├── ml_training_pipeline.py        # 🤖 BigQuery ML training
 │   ├── data_validation.py             # ✅ Dataflow DLQ + Soda checks
@@ -76,7 +76,7 @@ A production-grade **Data Lakehouse ELT pipeline** on Google Cloud Platform usin
 │   ├── schema_evolution/
 │   │   └── evolve.py                  # Schema change detection
 │   └── sql/
-│       ├── silver/                    # Silver DDL & transforms
+│       ├── silver/                    # Procedures (sp_upsert_business.sql)
 │       ├── gold/                      # Gold aggregation queries
 │       └── ml/                        # CREATE MODEL & EVALUATE
 │
@@ -149,11 +149,11 @@ Access the Airflow UI at http://localhost:8080 (admin/admin).
 The DAGs are connected via **data-aware scheduling**:
 
 ```
-bronze_batch_ingest → silver_transform → gold_aggregate → ml_training_pipeline
+bronze_lake_ingest → silver_transform → gold_aggregate → ml_training_pipeline
                                                      └──→ data_validation
 ```
 
-1. Trigger `bronze_batch_ingest` manually
+1. Trigger `bronze_lake_ingest` manually
 2. `silver_transform` fires automatically when Bronze completes
 3. `gold_aggregate` fires when Silver completes
 4. `ml_training_pipeline` fires when Gold completes

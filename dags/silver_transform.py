@@ -70,12 +70,28 @@ def silver_transform():
         if_exists="ignore",
     )
 
-    # ── Create Silver Tables ──────────────────────────────────────
+    # ── Create Silver Tables & Procedures ─────────────────────────
     create_silver_tables = BigQueryInsertJobOperator(
         task_id="create_silver_tables",
         configuration={
             "query": {
                 "query": "create_silver_tables.sql",
+                "useLegacySql": False,
+            }
+        },
+        params={
+            "project_id": GCP_PROJECT_ID,
+            "silver_dataset": BQ_SILVER_DATASET,
+        },
+        project_id=GCP_PROJECT_ID,
+        location=GCP_REGION,
+    )
+
+    deploy_stored_procedures = BigQueryInsertJobOperator(
+        task_id="deploy_stored_procedures",
+        configuration={
+            "query": {
+                "query": "sp_upsert_business.sql",
                 "useLegacySql": False,
             }
         },
@@ -127,14 +143,9 @@ def silver_transform():
             task_id="scd2_merge_businesses",
             configuration={
                 "query": {
-                    "query": "transform_businesses.sql",
+                    "query": f"CALL `{GCP_PROJECT_ID}.{BQ_SILVER_DATASET}.sp_upsert_business`('{GCP_PROJECT_ID}', '{BQ_BRONZE_DATASET}', '{BQ_SILVER_DATASET}')",
                     "useLegacySql": False,
                 }
-            },
-            params={
-                "project_id": GCP_PROJECT_ID,
-                "bronze_dataset": BQ_BRONZE_DATASET,
-                "silver_dataset": BQ_SILVER_DATASET,
             },
             project_id=GCP_PROJECT_ID,
             location=GCP_REGION,
@@ -187,6 +198,7 @@ def silver_transform():
     (
         create_silver_dataset
         >> create_silver_tables
+        >> deploy_stored_procedures
         >> [transform_reviews_group(), transform_businesses_group(), transform_users_group()]
         >> mark_silver_complete()
     )
