@@ -7,7 +7,7 @@ and managing Yelp dataset files in GCS with partitioned paths.
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from google.cloud import storage
 
@@ -95,7 +95,7 @@ def generate_partitioned_path(
         Partitioned path like: yelp/entity=review/date=2024-01-15/data.json
     """
     if date is None:
-        date = datetime.utcnow()
+        date = datetime.now(timezone.utc)
 
     date_str = date.strftime("%Y-%m-%d")
     timestamp = date.strftime("%Y%m%d_%H%M%S")

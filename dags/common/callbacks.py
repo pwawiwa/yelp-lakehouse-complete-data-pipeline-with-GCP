@@ -6,7 +6,7 @@ when tasks fail or are retried.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from airflow.utils.email import send_email
 
@@ -55,7 +55,7 @@ def on_failure_callback(context: dict) -> None:
             </tr>
             <tr style="background: #f5f5f5;">
                 <td style="padding: 8px; font-weight: bold; border: 1px solid #ddd;">Timestamp</td>
-                <td style="padding: 8px; border: 1px solid #ddd;">{datetime.utcnow().isoformat()}Z</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{datetime.now(timezone.utc).isoformat()}</td>
             </tr>
         </table>
 

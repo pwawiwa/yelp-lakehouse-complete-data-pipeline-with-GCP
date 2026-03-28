@@ -9,7 +9,7 @@ BigQuery/Iceberg table schemas. Supports:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from google.cloud import bigquery
 
@@ -213,7 +213,7 @@ def _log_schema_change(
 ) -> None:
     """Log schema change event for auditing."""
     event = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "table": f"{project_id}.{dataset_id}.{table_id}",
         "new_columns": changes.get("new_columns", []),
         "type_changes": changes.get("type_changes", []),

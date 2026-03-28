@@ -7,7 +7,7 @@ and type coercion for mixed-type JSON fields common in the Yelp dataset.
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ def coerce_types(record: dict, entity: str) -> dict:
     coerced = record.copy()
 
     # Common: ensure metadata fields
-    coerced.setdefault("_ingested_at", datetime.utcnow().isoformat())
+    coerced.setdefault("_ingested_at", datetime.now(timezone.utc).isoformat())
     coerced.setdefault("_schema_version", 1)
 
     if entity == "business":

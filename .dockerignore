@@ -12,3 +12,13 @@ infrastructure/
 *.tar
 *.tfstate*
 include/data/
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.vscode/
+.idea/
+*.log
+data

@@ -15,11 +15,12 @@ SELECT
         elite, friends, fans, average_stars
     ))) AS hash_diff
 FROM (
+    -- Deduplication: Ensure we only take the latest version of a user
     SELECT 
-        *, 
-        -- Deduplication: Use review_count as a proxy for the latest update
+        *,
         ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY review_count DESC, yelping_since DESC) AS _rn
     FROM `{{ project_id }}.{{ bronze_dataset }}.user`
+    WHERE dt = '{{ ds | default(macros.datetime.now().strftime("%Y-%m-%d")) }}'
 )
 WHERE _rn = 1;
 
@@ -70,11 +71,11 @@ WHEN NOT MATCHED BY TARGET AND source._action = 'INSERT' THEN
                'Anonymous'),
             'Anonymous'),
         SAFE_CAST(source.review_count AS INT64),
-        SAFE_CAST(source.yelping_since AS DATE),
+        SAFE_CAST(CAST(source.yelping_since AS TIMESTAMP) AS DATE),
         SAFE_CAST(source.useful AS INT64),
         SAFE_CAST(source.funny AS INT64),
         SAFE_CAST(source.cool AS INT64),
-        source.elite,
+        CAST(source.elite AS STRING),
         source.friends,
         SAFE_CAST(source.fans AS INT64),
         SAFE_CAST(source.average_stars AS FLOAT64),

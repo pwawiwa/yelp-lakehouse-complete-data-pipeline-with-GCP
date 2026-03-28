@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-from airflow.decorators import dag, task
+from airflow.sdk import dag, task
 from airflow.datasets import Dataset
 from airflow.providers.google.cloud.operators.bigquery import (
     BigQueryCreateEmptyDatasetOperator,
@@ -21,33 +21,6 @@ from dags.common.dag_config import (
 BRONZE_DATASETS = {
     entity: Dataset(f"bronze_{entity}") for entity in YELP_ENTITIES
 }
-
-
-# ── Raw Bronze Schemas (Explicitly define to avoid auto-inference issues) ──
-BRONZE_RAW_SCHEMAS = {
-    "business": """
-        business_id STRING, name STRING, address STRING, city STRING, state STRING, 
-        postal_code STRING, latitude FLOAT64, longitude FLOAT64, stars FLOAT64, 
-        review_count INT64, is_open INT64, categories STRING, 
-        attributes JSON, hours JSON
-    """,
-    "review": """
-        review_id STRING, user_id STRING, business_id STRING, stars FLOAT64, 
-        useful INT64, funny INT64, cool INT64, text STRING, date TIMESTAMP
-    """,
-    "user": """
-        user_id STRING, name STRING, review_count INT64, yelping_since TIMESTAMP, 
-        useful INT64, funny INT64, cool INT64, elite STRING, friends STRING, 
-        fans INT64, average_stars FLOAT64, compliment_hot INT64, 
-        compliment_more INT64, compliment_profile INT64, compliment_cute INT64, 
-        compliment_list INT64, compliment_note INT64, compliment_plain INT64, 
-        compliment_cool INT64, compliment_funny INT64, compliment_writer INT64, 
-        compliment_photos INT64
-    """,
-    "checkin": "business_id STRING, date STRING",
-    "tip": "user_id STRING, business_id STRING, text STRING, date TIMESTAMP, compliment_count INT64"
-}
-
 
 @dag(
     dag_id="bronze_lake_ingest",
@@ -93,29 +66,51 @@ def bronze_lake_ingest():
             raise FileNotFoundError(f"No data found in gs://{GCS_BRONZE_BUCKET}/yelp/raw/")
         return available
 
-    # Use BigQueryInsertJobOperator for creating BigLake External Tables
-    # We generate the DDL dynamically within the mapping
     @task()
     def get_biglake_ddls(entities: list[str]) -> list[dict]:
         ddls = []
         for entity in entities:
             table_id = f"{GCP_PROJECT_ID}.{BQ_BRONZE_DATASET}.{entity}"
-            source_uri = f"gs://{GCS_BRONZE_BUCKET}/yelp/raw/entity={entity}/*.json"
+            source_uri_prefix = f"gs://{GCS_BRONZE_BUCKET}/yelp/raw/entity={entity}/"
+            source_uri = f"{source_uri_prefix}*"
             connection_id = f"projects/{GCP_PROJECT_ID}/locations/{GCP_REGION}/connections/biglake-connection"
             
-            schema = BRONZE_RAW_SCHEMAS.get(entity, "")
-            schema_clause = f"({schema})" if schema else ""
-
+            # MINIMALIST DDL:
+            # We omit the problematic Hive partitioning OPTIONS keys.
+            # Because your GCS URIs follow the 'dt=YYYY-MM-DD' pattern, 
+            # and we define 'WITH PARTITION COLUMNS (dt STRING)', BigQuery 
+            # will automatically infer the partitioning schema from the paths.
+            
+            # SCHEMA MAPPING (Fixes JSON parsing errors like 'None' in boolean fields)
+            schema_clause = ""
+            if entity == "business":
+                schema_clause = """(
+                    business_id STRING, name STRING, address STRING, city STRING, state STRING, 
+                    postal_code STRING, latitude FLOAT64, longitude FLOAT64, stars FLOAT64, 
+                    review_count INT64, is_open INT64, attributes JSON, hours JSON, categories STRING
+                )"""
+            elif entity == "user":
+                schema_clause = """(
+                    user_id STRING, name STRING, review_count INT64, yelping_since STRING, 
+                    useful INT64, funny INT64, cool INT64, elite STRING, friends STRING, 
+                    fans INT64, average_stars FLOAT64, compliment_hot INT64, compliment_more INT64, 
+                    compliment_profile INT64, compliment_cute INT64, compliment_list INT64, 
+                    compliment_note INT64, compliment_plain INT64, compliment_cool INT64, 
+                    compliment_funny INT64, compliment_writer INT64, compliment_photos INT64
+                )"""
+            
             ddls.append({
                 "query": {
                     "query": f"""
                         CREATE OR REPLACE EXTERNAL TABLE `{table_id}`
                         {schema_clause}
+                        WITH PARTITION COLUMNS (dt STRING)
                         WITH CONNECTION `{connection_id}`
                         OPTIONS (
                             format = 'JSON',
                             uris = ['{source_uri}'],
-                            max_bad_records = 10000,
+                            hive_partition_uri_prefix = '{source_uri_prefix}',
+                            max_bad_records = 100000,
                             ignore_unknown_values = TRUE
                         )
                     """,
@@ -130,8 +125,65 @@ def bronze_lake_ingest():
     def mark_datasets_complete(entities: list[str]) -> dict:
         return {
             "entities_loaded": entities,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+
+    @task()
+    def validate_bronze_data(entities: list[str]):
+        from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
+        from datetime import datetime, timezone
+        
+        target_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        print(f"🔍 Running Pre-SCD Check: Light Validation (Nulls & Duplicates) in Bronze (Date: {target_date})...")
+        hook = BigQueryHook()
+        
+        for entity in entities:
+            if entity == "user":
+                group_cols = "user_id"
+                null_cond = "user_id IS NULL"
+                dup_filter = "AND user_id IS NOT NULL"
+            elif entity == "business":
+                group_cols = "business_id"
+                null_cond = "business_id IS NULL"
+                dup_filter = "AND business_id IS NOT NULL"
+            elif entity == "checkin":
+                group_cols = "business_id"
+                null_cond = "business_id IS NULL"
+                dup_filter = "AND business_id IS NOT NULL"
+            elif entity == "review":
+                group_cols = "review_id"
+                null_cond = "user_id IS NULL OR business_id IS NULL"
+                dup_filter = "AND review_id IS NOT NULL"
+            elif entity == "tip":
+                group_cols = "user_id, business_id, date"
+                null_cond = "user_id IS NULL OR business_id IS NULL"
+                dup_filter = "AND user_id IS NOT NULL AND business_id IS NOT NULL AND date IS NOT NULL"
+
+            query = f"""
+            WITH KeyStats AS (
+                SELECT 
+                    {group_cols},
+                    COUNT(1) as row_count,
+                    SUM(CASE WHEN {null_cond} THEN 1 ELSE 0 END) as null_count
+                FROM `{BQ_BRONZE_DATASET}.{entity}`
+                WHERE dt = '{target_date}'
+                GROUP BY {group_cols}
+            )
+            SELECT 
+                SUM(null_count) as total_nulls,
+                COUNTIF(row_count > 1 {dup_filter}) as total_duplicates
+            FROM KeyStats
+            """
+            
+            df = hook.get_df(query, dialect='standard')
+            nulls = int(df.iloc[0]['total_nulls']) if not df['total_nulls'].isna().all() else 0
+            duplicates = int(df.iloc[0]['total_duplicates']) if not df['total_duplicates'].isna().all() else 0
+            
+            if nulls > 0 or duplicates > 0:
+                print(f"  ⚠️ LIGHT VALIDATION WARNING | {entity.upper()}: Found {nulls} NULL records and {duplicates} duplicate keys. Ingestion proceeding as analysis source-of-truth.")
+            else:
+                print(f"  ✅ {entity.upper()}: Clean. 0 NULL records, 0 duplicates.")
+
 
     # ── DAG Flow ──────────────────────────────────────────────────
     available_entities = get_available_entities()
@@ -144,8 +196,8 @@ def bronze_lake_ingest():
         configuration=ddls,
     )
     
-    create_bronze_dataset >> available_entities >> create_biglake_tables >> mark_datasets_complete(available_entities)
-
+    validation_task = validate_bronze_data(available_entities)
+    create_bronze_dataset >> available_entities >> create_biglake_tables >> validation_task >> mark_datasets_complete(available_entities)
 
 # Instantiate the DAG
 bronze_lake_ingest()

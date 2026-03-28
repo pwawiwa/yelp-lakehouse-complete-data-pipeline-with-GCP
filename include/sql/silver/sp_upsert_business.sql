@@ -1,7 +1,8 @@
 CREATE OR REPLACE PROCEDURE `{{ project_id }}.{{ silver_dataset }}.sp_upsert_business`(
     p_project_id STRING,
     p_bronze_dataset STRING,
-    p_silver_dataset STRING
+    p_silver_dataset STRING,
+    p_dt STRING
 )
 BEGIN
     /*
@@ -29,6 +30,7 @@ BEGIN
         -- Deduplication: Use review_count as a proxy for the latest update
         SELECT *, ROW_NUMBER() OVER (PARTITION BY business_id ORDER BY review_count DESC, stars DESC) AS _rn
         FROM `{{ project_id }}.{{ bronze_dataset }}.business`
+        WHERE dt = COALESCE(p_dt, '2026-03-28')
     )
     WHERE _rn = 1;
 

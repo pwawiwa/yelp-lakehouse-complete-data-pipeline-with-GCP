@@ -26,12 +26,13 @@ USING (
         LENGTH(text) AS char_length,
         -- 3. Simple Sentiment Proxy (Count '!' and '?')
         LENGTH(REGEXP_REPLACE(text, r'[^!]', '')) AS exclamation_count,
-        SAFE_CAST(date AS DATE) AS review_date,
+        SAFE_CAST(CAST(date AS TIMESTAMP) AS DATE) AS review_date,
         processing_time AS _ingested_at
     FROM (
         -- Deduplication: Ensure we only take the latest version of a review
         SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY date DESC) AS _rn
         FROM `{{ project_id }}.{{ bronze_dataset }}.review`
+        WHERE dt = '{{ ds | default(macros.datetime.now().strftime("%Y-%m-%d")) }}'
     )
     WHERE _rn = 1
 ) AS source

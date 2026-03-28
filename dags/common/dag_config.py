@@ -5,6 +5,7 @@ All DAGs in the pipeline should use `default_args` and `dag_config`
 from this module for consistent behavior, retries, and alerting.
 """
 
+import os
 from datetime import timedelta
 
 from airflow.models import Variable
@@ -13,7 +14,15 @@ from dags.common.callbacks import on_failure_callback, on_retry_callback
 
 
 def get_var(key: str, default: str = "") -> str:
-    """Safely get an Airflow Variable with a fallback default."""
+    """
+    Safely get configuration.
+    Priority: 1. Environment Variable 2. Airflow Variable 3. Default
+    """
+    # Astro common env vars: GCP_PROJECT_ID, GOOGLE_CLOUD_PROJECT
+    env_val = os.getenv(key.upper()) or os.getenv(f"AIRFLOW_VAR_{key.upper()}")
+    if env_val:
+        return env_val
+        
     try:
         return Variable.get(key, default_var=default)
     except Exception:
@@ -22,7 +31,7 @@ def get_var(key: str, default: str = "") -> str:
 
 # ── Project-wide Variables ────────────────────────────────────────
 
-GCP_PROJECT_ID = get_var("gcp_project_id", "your-gcp-project-id")
+GCP_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT") or get_var("gcp_project_id", "yelp-production")
 GCP_REGION = get_var("gcp_region", "asia-southeast1")
 GCS_BRONZE_BUCKET = get_var("gcs_bronze_bucket", f"{GCP_PROJECT_ID}-bronze")
 BQ_BRONZE_DATASET = get_var("bq_bronze_dataset", "bronze")
@@ -41,7 +50,7 @@ default_args = {
     "email": [ALERT_EMAIL],
     "email_on_failure": False,
     "email_on_retry": False,
-    "retries": 3,
+    "retries": 0,
     "retry_delay": timedelta(minutes=5),
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=30),

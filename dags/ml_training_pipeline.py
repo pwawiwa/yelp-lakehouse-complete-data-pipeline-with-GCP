@@ -100,7 +100,7 @@ def ml_training_pipeline():
             business_avg_stars,
             business_review_count,
             business_is_open,
-            business_category,
+            business_category_group,
             user_review_count,
             user_avg_stars,
             user_fans,

@@ -106,7 +106,7 @@ OPTIONS (
 -- Silver Checkins: Clustered by business_id
 CREATE TABLE IF NOT EXISTS `{{ project_id }}.{{ silver_dataset }}.checkins` (
     business_id     STRING      NOT NULL,
-    date            STRING,
+    date            TIMESTAMP,
     _ingested_at    TIMESTAMP   NOT NULL,
     _source_file    STRING,
     _schema_version INT64       NOT NULL,
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS `{{ project_id }}.{{ silver_dataset }}.tips` (
     _schema_version   INT64       NOT NULL,
     _processed_at     TIMESTAMP
 )
-PARTITION BY date
+PARTITION BY DATE_TRUNC(date, MONTH)
 CLUSTER BY business_id
 OPTIONS (
     description = 'Silver layer: Cleansed and PII-masked Yelp tips',
