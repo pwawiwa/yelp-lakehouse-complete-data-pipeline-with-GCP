@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS `{{ project_id }}.{{ silver_dataset }}.businesses` (
     categories      STRING,
     attributes_json STRING,
     hours_json      STRING,
+    data_quality_tag STRING,
     -- SCD Type 2 tracking columns
     is_current      BOOLEAN     NOT NULL,
     valid_from      TIMESTAMP   NOT NULL,
@@ -85,6 +86,7 @@ CREATE TABLE IF NOT EXISTS `{{ project_id }}.{{ silver_dataset }}.users` (
     compliment_funny    INT64,
     compliment_writer   INT64,
     compliment_photos   INT64,
+    user_loyalty_tier   STRING,
     -- SCD Type 2 tracking columns
     is_current          BOOLEAN     NOT NULL,
     valid_from          TIMESTAMP   NOT NULL,

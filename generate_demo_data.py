@@ -66,7 +66,7 @@ def generate_user_record(user_id=None, add_extra=False):
         "compliment_photos": 0,
     }
     if add_extra:
-        record["user_loyalty_tier"] = "verified"
+        record["member_status"] = "verified"
     return record
 
 def generate_review_record():

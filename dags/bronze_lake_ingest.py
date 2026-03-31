@@ -125,6 +125,10 @@ def bronze_lake_ingest():
                     compliment_note INT64, compliment_plain INT64, compliment_cool INT64, 
                     compliment_funny INT64, compliment_writer INT64, compliment_photos INT64
                 )"""
+            elif entity == "checkin":
+                schema_clause = """(
+                    business_id STRING, date STRING
+                )"""
             
             ddls.append({
                 "query": {
