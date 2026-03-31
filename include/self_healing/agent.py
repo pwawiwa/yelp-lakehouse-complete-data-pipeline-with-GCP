@@ -344,7 +344,7 @@ def run_healing_loop(
             messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
             tools=TOOLS,
             tool_choice="auto",
-            max_tokens=4096,
+            max_completion_tokens=4096,
         )
 
         message = response.choices[0].message
