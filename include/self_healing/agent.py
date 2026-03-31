@@ -18,39 +18,59 @@ logger = logging.getLogger(__name__)
 AIRFLOW_API_BASE = os.getenv("AIRFLOW_API_BASE", "http://host.docker.internal:8080/api/v2")
 DAGS_DIR = os.getenv("AIRFLOW_HOME", "/usr/local/airflow") + "/dags"
 
+# In-memory token cache for the duration of one agent run
+_cached_token: str | None = None
 
-def _get_auth_headers() -> dict:
-    """Return the correct auth headers for the Airflow REST API.
-    Prefers Bearer token (AIRFLOW_API_TOKEN) over Basic auth.
+
+def _get_bearer_token() -> str:
     """
-    token = os.getenv("AIRFLOW_API_TOKEN")
-    if token:
-        return {"Authorization": f"Bearer {token}"}
-    return {}  # requests will use the auth tuple (Basic auth) instead
+    Airflow 3.0 requires JWT auth: POST /auth/token -> {access_token}.
+    Caches the token in-process for the duration of one healing loop.
+    """
+    global _cached_token
+    if _cached_token:
+        return _cached_token
 
+    # Check if a token was explicitly provided via Variable/env
+    explicit_token = os.getenv("AIRFLOW_API_TOKEN")
+    if explicit_token:
+        _cached_token = explicit_token
+        return _cached_token
 
-def _get_basic_auth():
-    """Return basic auth tuple, or None if using Bearer token."""
-    if os.getenv("AIRFLOW_API_TOKEN"):
-        return None  # Using Bearer, no basic auth needed
-    return (
-        os.getenv("AIRFLOW_USERNAME", "admin"),
-        os.getenv("AIRFLOW_PASSWORD", "admin"),
+    # Auto-login: exchange username+password for a JWT
+    username = os.getenv("AIRFLOW_USERNAME", "admin")
+    password = os.getenv("AIRFLOW_PASSWORD", "admin")
+    auth_url = f"{AIRFLOW_API_BASE}/auth/token"
+
+    logger.info(f"🔑 Fetching Airflow JWT from {auth_url} as '{username}'...")
+    resp = requests.post(
+        auth_url,
+        json={"username": username, "password": password},
+        timeout=15,
     )
+    resp.raise_for_status()
+    _cached_token = resp.json()["access_token"]
+    logger.info("✅ Airflow JWT acquired successfully.")
+    return _cached_token
+
+
+def _auth_headers() -> dict:
+    """Return the Authorization header using the cached Bearer token."""
+    return {"Authorization": f"Bearer {_get_bearer_token()}"}
 
 
 # ── Airflow REST API Helpers ──────────────────────────────────────────────────
 
 def _airflow_get(endpoint: str, params: dict | None = None) -> dict:
     url = f"{AIRFLOW_API_BASE}/{endpoint}"
-    resp = requests.get(url, auth=_get_basic_auth(), headers=_get_auth_headers(), params=params, timeout=30)
+    resp = requests.get(url, headers=_auth_headers(), params=params, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
 
 def _airflow_post(endpoint: str, data: dict | None = None) -> dict:
     url = f"{AIRFLOW_API_BASE}/{endpoint}"
-    resp = requests.post(url, auth=_get_basic_auth(), headers=_get_auth_headers(), json=data or {}, timeout=30)
+    resp = requests.post(url, headers=_auth_headers(), json=data or {}, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
