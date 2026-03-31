@@ -17,7 +17,7 @@ AIRFLOW_AUTH = (
     os.getenv("AIRFLOW_USERNAME", "admin"),
     os.getenv("AIRFLOW_PASSWORD", "admin"),
 )
-AIRFLOW_API_BASE = os.getenv("AIRFLOW_API_BASE", "http://localhost:8080/api/v1")
+AIRFLOW_API_BASE = os.getenv("AIRFLOW_API_BASE", "http://webserver:8080/api/v1")
 DAGS_DIR = os.getenv("AIRFLOW_HOME", "/usr/local/airflow") + "/dags"
 
 
