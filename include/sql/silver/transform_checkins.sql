@@ -11,8 +11,8 @@ USING (
         CAST(TRIM(checkin_date) AS TIMESTAMP) AS date,
         processing_time AS _ingested_at
     FROM `{{ project_id }}.{{ bronze_dataset }}.checkin`, 
-         UNNEST(SPLIT(date, ',')) AS checkin_date
-    WHERE dt = '{{ ds | default(macros.datetime.now().strftime("%Y-%m-%d")) }}'
+         UNNEST(SPLIT(CAST(date AS STRING), ',')) AS checkin_date
+    WHERE dt = '{{ jakarta_date(dag_run.logical_date) }}'
       AND TRIM(checkin_date) != ''
     QUALIFY ROW_NUMBER() OVER (PARTITION BY business_id, TRIM(checkin_date) ORDER BY business_id) = 1
 ) AS source

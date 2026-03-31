@@ -20,7 +20,7 @@ FROM (
         *,
         ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY review_count DESC, yelping_since DESC) AS _rn
     FROM `{{ project_id }}.{{ bronze_dataset }}.user`
-    WHERE dt = '{{ ds | default(macros.datetime.now().strftime("%Y-%m-%d")) }}'
+    WHERE dt = '{{ jakarta_date(dag_run.logical_date) }}'
 )
 WHERE _rn = 1;
 

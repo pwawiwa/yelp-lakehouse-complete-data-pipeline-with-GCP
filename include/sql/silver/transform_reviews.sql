@@ -32,7 +32,7 @@ USING (
         -- Deduplication: Ensure we only take the latest version of a review
         SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY date DESC) AS _rn
         FROM `{{ project_id }}.{{ bronze_dataset }}.review`
-        WHERE dt = '{{ ds | default(macros.datetime.now().strftime("%Y-%m-%d")) }}'
+        WHERE dt = '{{ jakarta_date(dag_run.logical_date) }}'
     )
     WHERE _rn = 1
 ) AS source

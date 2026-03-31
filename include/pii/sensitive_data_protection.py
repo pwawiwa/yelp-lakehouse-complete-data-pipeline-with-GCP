@@ -87,7 +87,8 @@ def inspect_bigquery_table(
         "storage_config": storage_config,
     }
 
-    parent = f"projects/{project_id}/locations/global"
+    # Use specific location matching the BQ dataset for job reliability
+    parent = f"projects/{project_id}/locations/asia-southeast1"
 
     response = client.create_dlp_job(
         request={
@@ -125,7 +126,8 @@ def create_deidentify_template(
         Template resource name.
     """
     client = get_dlp_client()
-    parent = f"projects/{project_id}/locations/global"
+    # Use specific location matching the BQ dataset
+    parent = f"projects/{project_id}/locations/asia-southeast1"
 
     if kms_key_name:
         # Deterministic encryption (reversible)
@@ -208,7 +210,8 @@ def deidentify_bigquery_table(
         Dict with job details.
     """
     client = get_dlp_client()
-    parent = f"projects/{project_id}/locations/global"
+    # Use specific location matching the BQ dataset
+    parent = f"projects/{project_id}/locations/asia-southeast1"
 
     if info_types is None:
         info_types = DEFAULT_INFO_TYPES
@@ -297,7 +300,7 @@ def apply_column_level_security(
         if field.name in pii_columns:
             # Add policy tag reference
             policy_tag_ref = (
-                f"projects/{project_id}/locations/us/"
+                f"projects/{project_id}/locations/asia-southeast1/"
                 f"taxonomies/{taxonomy_id}/policyTags/{policy_tag}"
             )
             new_field = field._properties.copy()

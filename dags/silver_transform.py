@@ -21,6 +21,7 @@ from dags.common.dag_config import (
     GCS_BRONZE_BUCKET,
     BQ_BRONZE_DATASET,
     BQ_SILVER_DATASET,
+    BQ_GOLD_DATASET,
     YELP_ENTITIES,
 )
 
@@ -30,6 +31,32 @@ SILVER_DATASETS = {
 }
 VALIDATED_SILVER = Dataset("validated_silver")
 BRONZE_DATASETS = [Dataset(f"bronze_{entity}") for entity in YELP_ENTITIES]
+
+
+def get_jakarta_date(dt=None, **kwargs):
+    """
+    Standardizes date into Jakarta timezone for SQL partitioning.
+    Resilient to Airflow 3.0 TaskSDK context changes.
+    """
+    import pendulum
+    from datetime import datetime
+    
+    # Try to find a valid date in various possible locations
+    final_dt = dt
+    if not final_dt or str(final_dt) == 'None' or 'Undefined' in str(final_dt):
+        final_dt = kwargs.get('logical_date') or kwargs.get('data_interval_end')
+        
+    if not final_dt or str(final_dt) == 'None' or 'Undefined' in str(final_dt):
+        final_dt = pendulum.now('UTC')
+
+    # Convert to pendulum if it's a string or basic datetime
+    if isinstance(final_dt, str):
+        try:
+            final_dt = pendulum.parse(final_dt)
+        except:
+            final_dt = pendulum.now('UTC')
+            
+    return pendulum.instance(final_dt).in_timezone('Asia/Jakarta').strftime('%Y-%m-%d')
 
 
 @dag(
@@ -42,6 +69,8 @@ BRONZE_DATASETS = [Dataset(f"bronze_{entity}") for entity in YELP_ENTITIES]
         "project_id": GCP_PROJECT_ID,
         "bronze_dataset": BQ_BRONZE_DATASET,
         "silver_dataset": BQ_SILVER_DATASET,
+        "gold_dataset": BQ_GOLD_DATASET,
+        "jakarta_date": get_jakarta_date,
     },
     **{k: v for k, v in dag_config.items() if k != "tags"},
 )
@@ -93,6 +122,25 @@ def silver_transform():
         params={
             "project_id": GCP_PROJECT_ID,
             "silver_dataset": BQ_SILVER_DATASET,
+        },
+        project_id=GCP_PROJECT_ID,
+        location=GCP_REGION,
+        do_xcom_push=False,
+    )
+
+    deploy_audit_procedure = BigQueryInsertJobOperator(
+        task_id="deploy_audit_procedure",
+        configuration={
+            "query": {
+                "query": "sp_pipeline_audit_report.sql",
+                "useLegacySql": False,
+            }
+        },
+        params={
+            "project_id": GCP_PROJECT_ID,
+            "bronze_dataset": BQ_BRONZE_DATASET,
+            "silver_dataset": BQ_SILVER_DATASET,
+            "gold_dataset": BQ_GOLD_DATASET,
         },
         project_id=GCP_PROJECT_ID,
         location=GCP_REGION,
@@ -152,12 +200,11 @@ def silver_transform():
             print("🏢 Starting SCD Type 2 transformation for entity: BUSINESSES...")
 
         @task()
-        def scd2_merge_businesses(ds=None, **kwargs):
+        def scd2_merge_businesses(**kwargs):
             from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
-            from datetime import datetime, timezone
             
-            # Robust date detection for Airflow 3.0 / Asset-triggered runs
-            run_date = ds or kwargs.get('logical_date', datetime.now(timezone.utc)).strftime('%Y-%m-%d')
+            # Use standardized Jakarta time via macro helper
+            run_date = get_jakarta_date(**kwargs)
             print(f"🏢 Running Business Upsert for date: {run_date}")
             
             hook = BigQueryHook()
@@ -266,6 +313,7 @@ def silver_transform():
                 "project_id": GCP_PROJECT_ID,
                 "bronze_dataset": BQ_BRONZE_DATASET,
                 "silver_dataset": BQ_SILVER_DATASET,
+                "run_date": "{{ logical_date.in_timezone('Asia/Jakarta').strftime('%Y-%m-%d') }}",
             },
             project_id=GCP_PROJECT_ID,
             location=GCP_REGION,
@@ -280,9 +328,9 @@ def silver_transform():
         @task()
         def check_scd_integrity(**kwargs):
             from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
-            from datetime import datetime, timezone
             
-            run_date = kwargs.get('ds', datetime.now(timezone.utc).strftime('%Y-%m-%d'))
+            # Use standardized Jakarta time via macro helper
+            run_date = get_jakarta_date(**kwargs)
             print(f"✅ Running Strict Post-SCD SQL Audits for partition {run_date}...")
             # Force use_legacy_sql=False to match the #standardSQL prefix in queries
             hook = BigQueryHook(use_legacy_sql=False)
@@ -290,32 +338,34 @@ def silver_transform():
             # 1. Validate SCD2 Dimensions (Users, Businesses)
             for dim in ['users', 'businesses']:
                 pk = 'user_id' if dim == 'users' else 'business_id'
-                
-                # Use dataset.table format (no backticks unless ID contains dashes/special chars)
-                # Force Standard SQL dialect using #standardSQL prefix for hook compatibility
                 table_path = f"{BQ_SILVER_DATASET}.{dim}"
                 
-                # SQL-based NULL count check
-                null_query = f"SELECT COUNT(*) FROM {table_path} WHERE {pk} IS NULL"
+                # INCREMENTAL FIX: Only validate the records processed in the current batch
+                # This prevents "Wasteful Scans" of the entire dimension table
+                batch_filter = f"WHERE DATE(_processed_at) = '{run_date}'"
+                
+                # SQL-based NULL count check for current batch
+                null_query = f"SELECT COUNT(*) FROM {table_path} {batch_filter} AND {pk} IS NULL"
                 res_null = hook.get_first(null_query)
                 if res_null and res_null[0] > 0:
-                    raise ValueError(f"SCD2 Integrity Failed! {res_null[0]} NULL primary keys found in {dim}.")
-                print(f"   - {dim}: 0 NULL keys found. ✅")
+                    raise ValueError(f"SCD2 Integrity Failed! {res_null[0]} NULL primary keys found in {dim} for batch {run_date}.")
+                print(f"   - {dim}: Batch {run_date} NULL keys verified. ✅")
                     
-                # SQL-based SCD2 Active Uniqueness check
+                # SQL-based SCD2 Active Uniqueness check (limited to entities in the current batch)
                 unique_query = f"""
                     SELECT COUNT(*) FROM (
                         SELECT {pk}, COUNT(*) as active_count
                         FROM {table_path}
-                        WHERE is_current = TRUE
+                        WHERE {pk} IN (SELECT {pk} FROM {table_path} {batch_filter})
+                          AND is_current = TRUE
                         GROUP BY {pk}
                         HAVING active_count > 1
                     )
                 """
                 res_unique = hook.get_first(unique_query)
                 if res_unique and res_unique[0] > 0:
-                    raise ValueError(f"SCD2 Integrity violated in {dim}: {res_unique[0]} entities have multiple active records.")
-                print(f"   - {dim}: Active uniqueness verified. ✅")
+                    raise ValueError(f"SCD2 Integrity violated in {dim}: {res_unique[0]} entities have multiple active records after batch {run_date}.")
+                print(f"   - {dim}: Active uniqueness verified for impacted records. ✅")
 
             # 2. Validate Facts (Reviews, Tips, Checkins) for the current partition
             for fact in ['reviews', 'tips', 'checkins']:
@@ -373,21 +423,20 @@ def silver_transform():
         }
 
     # ── Task Dependencies ─────────────────────────────────────────
-    (
-        create_silver_dataset
-        >> log_table_creation()
-        >> create_silver_tables
-        >> deploy_stored_procedures
-        >> [
-            transform_reviews_group(), 
-            transform_businesses_group(), 
-            transform_users_group(),
-            transform_tips_group(),
-            transform_checkins_group()
-        ]
-        >> post_scd_validation_group()
-        >> mark_silver_complete()
-    )
+    create_silver_dataset >> log_table_creation() >> create_silver_tables >> [deploy_stored_procedures, deploy_audit_procedure]
+    
+    transforms = [
+        transform_reviews_group(), 
+        transform_businesses_group(), 
+        transform_users_group(),
+        transform_tips_group(),
+        transform_checkins_group()
+    ]
+    
+    deploy_stored_procedures >> transforms
+    deploy_audit_procedure >> transforms
+    
+    transforms >> post_scd_validation_group() >> mark_silver_complete()
 
 
 silver_transform()

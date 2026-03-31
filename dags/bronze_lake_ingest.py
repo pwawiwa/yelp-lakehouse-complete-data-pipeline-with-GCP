@@ -22,12 +22,39 @@ BRONZE_DATASETS = {
     entity: Dataset(f"bronze_{entity}") for entity in YELP_ENTITIES
 }
 
+def get_jakarta_date(dt=None, **kwargs):
+    """
+    Standardizes date into Jakarta timezone for GCS path logic.
+    Resilient to Airflow 3.0 TaskSDK context changes.
+    """
+    import pendulum
+    from datetime import datetime
+
+    # Try to find a valid date in various possible locations
+    final_dt = dt
+    if not final_dt or str(final_dt) == 'None' or 'Undefined' in str(final_dt):
+        final_dt = kwargs.get('logical_date') or kwargs.get('data_interval_end')
+
+    if not final_dt or str(final_dt) == 'None' or 'Undefined' in str(final_dt):
+        final_dt = pendulum.now('UTC')
+
+    # Convert to pendulum if it's a string or basic datetime
+    if isinstance(final_dt, str):
+        try:
+            final_dt = pendulum.parse(final_dt)
+        except:
+            final_dt = pendulum.now('UTC')
+
+    return pendulum.instance(final_dt).in_timezone('Asia/Jakarta').strftime('%Y-%m-%d')
+
+
 @dag(
     dag_id="bronze_lake_ingest",
     schedule="@daily",
     start_date=datetime(2024, 1, 1),
-    description="Batch ingest Yelp JSON files to GCS Bronze layer with BigLake tables",
-    tags=["bronze", "ingestion", "batch", "biglake", "pure-lakehouse", *dag_config["tags"]],
+    description="Ingest Yelp GCS JSONs into BigQuery BigLake Bronze External Tables",
+    user_defined_macros={"jakarta_date": get_jakarta_date},
+    tags=["bronze", "ingestion", "biglake", *dag_config["tags"]],
     **{k: v for k, v in dag_config.items() if k != "tags"},
 )
 def bronze_lake_ingest():
@@ -129,11 +156,11 @@ def bronze_lake_ingest():
         }
 
     @task()
-    def validate_bronze_data(entities: list[str]):
+    def validate_bronze_data(entities: list[str], **kwargs):
         from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
-        from datetime import datetime, timezone
         
-        target_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        # Standardize on Jakarta time for partitioning
+        target_date = get_jakarta_date(**kwargs)
         print(f"🔍 Running Pre-SCD Check: Light Validation (Nulls & Duplicates) in Bronze (Date: {target_date})...")
         hook = BigQueryHook()
         

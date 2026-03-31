@@ -21,7 +21,7 @@ USING (
         -- Deduplication (Partition by casted DATE to ensure uniqueness matches the ON condition granularity)
         SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id, business_id, SAFE_CAST(date AS DATE) ORDER BY date DESC) AS _rn
         FROM `{{ project_id }}.{{ bronze_dataset }}.tip`
-        WHERE dt = '{{ ds | default(macros.datetime.now().strftime("%Y-%m-%d")) }}'
+        WHERE dt = '{{ jakarta_date(dag_run.logical_date) }}'
     )
     WHERE _rn = 1
 ) AS source

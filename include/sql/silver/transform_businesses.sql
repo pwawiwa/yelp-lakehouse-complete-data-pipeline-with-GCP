@@ -18,6 +18,7 @@ FROM (
     -- Ordering by name is okay, but ideally use an ingestion timestamp if available
     SELECT *, ROW_NUMBER() OVER (PARTITION BY business_id ORDER BY name) AS _rn
     FROM `{{ project_id }}.{{ bronze_dataset }}.business`
+    WHERE dt = '{{ jakarta_date(dag_run.logical_date) }}'
 )
 WHERE _rn = 1;
 

@@ -36,7 +36,7 @@ SELECT
         WHEN u.elite IS NOT NULL AND LENGTH(u.elite) > 0 THEN 1 
         ELSE 0 
     END                                             AS user_is_elite,
-    DATE_DIFF(CURRENT_DATE(), u.yelping_since, DAY) AS user_tenure_days,
+    DATE_DIFF(CURRENT_DATE('Asia/Jakarta'), u.yelping_since, DAY) AS user_tenure_days,
 
     -- 3. Review Content Features (Text Metadata)
     LENGTH(r.text)                                  AS review_text_length,

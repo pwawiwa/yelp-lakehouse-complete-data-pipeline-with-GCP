@@ -81,7 +81,7 @@ SELECT
         THEN ARRAY_LENGTH(SPLIT(friends, ','))
         ELSE 0
     END                                             AS friend_count,
-    DATE_DIFF(CURRENT_DATE(), yelping_since, DAY)    AS days_on_platform
+    DATE_DIFF(CURRENT_DATE('Asia/Jakarta'), yelping_since, DAY)    AS days_on_platform
 FROM `{{ project_id }}.{{ silver_dataset }}.users`
 WHERE user_id IS NOT NULL
     AND review_count > 0;

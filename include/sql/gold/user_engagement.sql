@@ -34,10 +34,10 @@ SELECT
         ELSE 0
     END                                             AS friend_count,
     -- Activity duration
-    DATE_DIFF(CURRENT_DATE(), u.yelping_since, DAY)  AS days_on_platform,
+    DATE_DIFF(CURRENT_DATE('Asia/Jakarta'), u.yelping_since, DAY)  AS days_on_platform,
     SAFE_DIVIDE(
         u.review_count,
-        GREATEST(DATE_DIFF(CURRENT_DATE(), u.yelping_since, DAY), 1)
+        GREATEST(DATE_DIFF(CURRENT_DATE('Asia/Jakarta'), u.yelping_since, DAY), 1)
     ) * 365                                         AS reviews_per_year,
     -- User tier
     CASE

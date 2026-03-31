@@ -148,7 +148,7 @@ def ml_training_pipeline():
             COALESCE(compliment_plain,0) + COALESCE(compliment_cool,0) + 
             COALESCE(compliment_funny,0) + COALESCE(compliment_writer,0) + 
             COALESCE(compliment_photos,0) AS total_compliments,
-            DATE_DIFF(CURRENT_DATE(), yelping_since, DAY) AS days_on_platform
+            DATE_DIFF(CURRENT_DATE('Asia/Jakarta'), yelping_since, DAY) AS days_on_platform
         FROM `{GCP_PROJECT_ID}.{BQ_SILVER_DATASET}.users`
         WHERE user_id IS NOT NULL AND review_count > 0
           AND is_current = TRUE

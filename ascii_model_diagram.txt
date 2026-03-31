@@ -1,0 +1,55 @@
+====================================================================================================
+                              YELP DATA LAKEHOUSE ARCHITECTURE
+====================================================================================================
+
+  BRONZE (Raw / Landing)           SILVER (Cleansed / Formatted)          GOLD (Analytics / ML)
+  Format: JSON / Parquet           Format: Delta / SCD Type 2             Format: Star Schema / Aggs
+ ────────────────────────         ──────────────────────────────         ──────────────────────────
+
+ [ Entity: USER ]                 [ Table: dim_users ]                   [ Table: fct_user_engagement ]
+  - user_id (PK) ───────────────>  - user_id (PK)                         - user_id (FK)
+  - name                           - name                                 - total_reviews
+  - review_count                   - review_count                         - average_stars
+  - yelping_since                  - yelping_since                        - user_tier (Aggregated)
+  - ... (20+ fields)               - ... (all fields)                     - last_active_date
+                                   - is_current (SCD2)
+                                   - valid_from (SCD2)
+                                   - valid_to   (SCD2)
+                                   - hash_diff  (Metadata)
+
+
+ [ Entity: BUSINESS ]             [ Table: dim_businesses ]              [ Table: city_analytics ]
+  - business_id (PK) ───────────>  - business_id (PK)                     - city (Group Key)
+  - name                           - name                                 - avg_business_rating
+  - address                        - address                              - active_business_count
+  - attributes (JSON) ──────────>  - attributes_flattened                 - top_category
+  - categories                     - categories
+                                   - is_current (SCD2)
+                                   - valid_from (SCD2)
+                                   - hash_diff  (Metadata)
+
+
+ [ Entity: REVIEW ]               [ Table: fct_reviews ]                 [ Table: ml_star_prediction ]
+  - review_id (PK) ─────────────>  - review_id (PK)                       - review_id (FK)
+  - user_id (FK) ───────────────>  - user_id (FK) ──────────────────────> - user_review_count
+  - business_id (FK) ───────────>  - business_id (FK) ───────────────────> - business_stars
+  - stars                          - stars                                - text_word_count
+  - text ───────────────────────>  - text (PII Masked)                    - stars (TARGET)
+  - date                           - date
+                                   - _processed_at (TS)
+
+
+ [ Entity: CHECKIN ]              [ Table: fct_checkins ]
+  - business_id (FK) ───────────>  - business_id (FK)
+  - date (CSV List) ────────────>  - date (Exploded/Timestamp)
+
+
+ [ Entity: TIP ]                  [ Table: fct_tips ]
+  - user_id (FK) ───────────────>  - user_id (FK)
+  - business_id (FK) ───────────>  - business_id (FK)
+  - text ───────────────────────>  - text (PII Masked)
+
+ ────────────────────────         ──────────────────────────────         ──────────────────────────
+      DATA INGESTION                  DATA TRANSFORMATION                    DATA CONSUMPTION
+   (API/Batch Extract)             (Cleaning, SCD2, Masking)              (BI Reports, ML Models)
+====================================================================================================
