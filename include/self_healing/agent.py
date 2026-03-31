@@ -182,16 +182,12 @@ def _execute_tool(name: str, args: dict) -> str:
         if name == "get_failed_dag_runs":
             dag_id = args.get("dag_id")
             limit = args.get("limit", 25)
-            if dag_id:
-                data = _airflow_get(
-                    f"dags/{dag_id}/dagRuns",
-                    params={"state": "failed", "limit": limit, "order_by": "-execution_date"}
-                )
-            else:
-                data = _airflow_post(
-                    "dags/~/dagRuns/list",
-                    data={"states": ["failed"], "page_limit": limit, "order_by": "-execution_date"}
-                )
+            # Airflow 3.0: use GET with query params for both single DAG and all DAGs
+            endpoint = f"dags/{dag_id}/dagRuns" if dag_id else "dags/~/dagRuns"
+            data = _airflow_get(
+                endpoint,
+                params={"state": "failed", "limit": limit, "order_by": "-execution_date"}
+            )
             runs = data.get("dag_runs", [])
             result = [
                 {
