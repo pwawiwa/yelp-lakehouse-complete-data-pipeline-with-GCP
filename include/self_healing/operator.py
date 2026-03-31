@@ -71,7 +71,8 @@ class SelfHealingOperator(BaseOperator):
         logger.info(f"✅ Cooldown of {self.cooldown_seconds}s complete. DAG will re-trigger via @continuous schedule.")
 
     def _ensure_api_key(self):
-        """Load OPENAI_API_KEY from Airflow Variables if not in the environment."""
+        """Load OpenAI + Airflow credentials from Variables if not in the environment."""
+        # --- OpenAI API Key ---
         if not os.getenv("OPENAI_API_KEY"):
             api_key = Variable.get("OPENAI_API_KEY", default_var=None)
             if api_key:
@@ -82,3 +83,20 @@ class SelfHealingOperator(BaseOperator):
                     "OPENAI_API_KEY not found. Set it as an environment variable or "
                     "an Airflow Variable in Admin > Variables."
                 )
+
+        # --- Airflow REST API credentials ---
+        # Try to load an API token first (preferred for Airflow 3)
+        if not os.getenv("AIRFLOW_API_TOKEN"):
+            token = Variable.get("AIRFLOW_API_TOKEN", default_var=None)
+            if token:
+                os.environ["AIRFLOW_API_TOKEN"] = token
+                logger.info("✅ AIRFLOW_API_TOKEN loaded from Airflow Variables.")
+
+        # Fall back to basic auth credentials
+        if not os.getenv("AIRFLOW_USERNAME"):
+            username = Variable.get("AIRFLOW_USERNAME", default_var="admin")
+            os.environ["AIRFLOW_USERNAME"] = username
+
+        if not os.getenv("AIRFLOW_PASSWORD"):
+            password = Variable.get("AIRFLOW_PASSWORD", default_var="admin")
+            os.environ["AIRFLOW_PASSWORD"] = password

@@ -13,26 +13,44 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 # ── Airflow REST API configuration ───────────────────────────────────────────
-AIRFLOW_AUTH = (
-    os.getenv("AIRFLOW_USERNAME", "admin"),
-    os.getenv("AIRFLOW_PASSWORD", "admin"),
-)
+# NOTE: Credentials are read at call time (not module load) so that the operator
+# can pre-load them from Airflow Variables into the environment before we run.
 AIRFLOW_API_BASE = os.getenv("AIRFLOW_API_BASE", "http://host.docker.internal:8080/api/v2")
 DAGS_DIR = os.getenv("AIRFLOW_HOME", "/usr/local/airflow") + "/dags"
+
+
+def _get_auth_headers() -> dict:
+    """Return the correct auth headers for the Airflow REST API.
+    Prefers Bearer token (AIRFLOW_API_TOKEN) over Basic auth.
+    """
+    token = os.getenv("AIRFLOW_API_TOKEN")
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    return {}  # requests will use the auth tuple (Basic auth) instead
+
+
+def _get_basic_auth():
+    """Return basic auth tuple, or None if using Bearer token."""
+    if os.getenv("AIRFLOW_API_TOKEN"):
+        return None  # Using Bearer, no basic auth needed
+    return (
+        os.getenv("AIRFLOW_USERNAME", "admin"),
+        os.getenv("AIRFLOW_PASSWORD", "admin"),
+    )
 
 
 # ── Airflow REST API Helpers ──────────────────────────────────────────────────
 
 def _airflow_get(endpoint: str, params: dict | None = None) -> dict:
     url = f"{AIRFLOW_API_BASE}/{endpoint}"
-    resp = requests.get(url, auth=AIRFLOW_AUTH, params=params, timeout=30)
+    resp = requests.get(url, auth=_get_basic_auth(), headers=_get_auth_headers(), params=params, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
 
 def _airflow_post(endpoint: str, data: dict | None = None) -> dict:
     url = f"{AIRFLOW_API_BASE}/{endpoint}"
-    resp = requests.post(url, auth=AIRFLOW_AUTH, json=data or {}, timeout=30)
+    resp = requests.post(url, auth=_get_basic_auth(), headers=_get_auth_headers(), json=data or {}, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
