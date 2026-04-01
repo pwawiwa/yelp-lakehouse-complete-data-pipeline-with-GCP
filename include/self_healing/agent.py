@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 # NOTE: Credentials are read at call time (not module load) so that the operator
 # can pre-load them from Airflow Variables into the environment before we run.
 AIRFLOW_API_BASE = os.getenv("AIRFLOW_API_BASE", "http://host.docker.internal:8080/api/v2")
+# Auth endpoint lives at the server root, NOT under /api/v2
+AIRFLOW_SERVER_BASE = AIRFLOW_API_BASE.replace("/api/v2", "").replace("/api/v1", "")
 DAGS_DIR = os.getenv("AIRFLOW_HOME", "/usr/local/airflow") + "/dags"
 
 # In-memory token cache for the duration of one agent run
@@ -40,7 +42,8 @@ def _get_bearer_token() -> str:
     # Auto-login: exchange username+password for a JWT
     username = os.getenv("AIRFLOW_USERNAME", "admin")
     password = os.getenv("AIRFLOW_PASSWORD", "admin")
-    auth_url = f"{AIRFLOW_API_BASE}/auth/token"
+    # Airflow 3.0: auth endpoint is at SERVER ROOT, not under /api/v2
+    auth_url = f"{AIRFLOW_SERVER_BASE}/auth/token"
 
     logger.info(f"🔑 Fetching Airflow JWT from {auth_url} as '{username}'...")
     resp = requests.post(
@@ -83,7 +86,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_failed_dag_runs",
-            "description": "Get recent failed DAG runs. Returns list with dag_id, run_id, and execution_date.",
+            "description": "Get recent failed DAG runs. Returns list with dag_id, run_id, and logical_date.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -94,6 +97,14 @@ TOOLS = [
                     "limit": {
                         "type": "integer",
                         "description": "Max number of runs to return. Default: 25."
+                    },
+                    "look_back_hours": {
+                        "type": "integer",
+                        "description": "Only return runs that started within this many hours ago. (Ignored if look_back_minutes is provided)."
+                    },
+                    "look_back_minutes": {
+                        "type": "integer",
+                        "description": "Only return runs that started within this many minutes ago. Default: 10."
                     }
                 },
                 "required": []
@@ -220,11 +231,28 @@ def _execute_tool(name: str, args: dict) -> str:
         if name == "get_failed_dag_runs":
             dag_id = args.get("dag_id")
             limit = args.get("limit", 25)
+            look_back_hours = args.get("look_back_hours")
+            look_back_minutes = args.get("look_back_minutes", 10)
+
+            # Only fetch runs from the last N minutes/hours to avoid fixing stale old failures
+            from datetime import datetime, timedelta, timezone
+            if look_back_minutes:
+                delta = timedelta(minutes=look_back_minutes)
+            else:
+                delta = timedelta(hours=look_back_hours or 6)
+
+            cutoff = (datetime.now(timezone.utc) - delta).isoformat()
+
             # Airflow 3.0: use GET with query params for both single DAG and all DAGs
             endpoint = f"dags/{dag_id}/dagRuns" if dag_id else "dags/~/dagRuns"
             data = _airflow_get(
                 endpoint,
-                params={"state": "failed", "limit": limit, "order_by": "-execution_date"}
+                params={
+                    "state": "failed",
+                    "limit": limit,
+                    "order_by": "-logical_date",
+                    "start_date_gte": cutoff,
+                }
             )
             runs = data.get("dag_runs", [])
             result = [
@@ -232,7 +260,7 @@ def _execute_tool(name: str, args: dict) -> str:
                     "dag_id": r["dag_id"],
                     "dag_run_id": r["dag_run_id"],
                     "state": r["state"],
-                    "execution_date": r.get("execution_date")
+                    "logical_date": r.get("logical_date")
                 }
                 for r in runs
             ]
@@ -279,13 +307,11 @@ def _execute_tool(name: str, args: dict) -> str:
             return f"Successfully wrote fix to {filepath}"
 
         elif name == "clear_failed_tasks":
+            # Airflow 3.0: clear the entire DAG run (resets failed tasks for retry)
             data = _airflow_post(
-                f"dags/{args['dag_id']}/clearTaskInstances",
+                f"dags/{args['dag_id']}/dagRuns/{args['dag_run_id']}/clear",
                 data={
-                    "dag_run_id": args["dag_run_id"],
-                    "include_downstream": True,
-                    "only_failed": True,
-                    "reset_dag_runs": True,
+                    "dry_run": False,
                 }
             )
             return json.dumps(data, indent=2)

@@ -79,9 +79,9 @@ def ml_training_pipeline():
     @task()
     def train_star_rating_model():
         """Train linear regression model for star rating prediction."""
-        from google.cloud import bigquery
+        from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
         
-        client = bigquery.Client(project=GCP_PROJECT_ID)
+        hook = BigQueryHook()
         
         query = f"""
         CREATE OR REPLACE MODEL `{GCP_PROJECT_ID}.{BQ_ML_DATASET}.star_rating_model`
@@ -112,16 +112,23 @@ def ml_training_pipeline():
         FROM `{GCP_PROJECT_ID}.{BQ_GOLD_DATASET}.ml_features_star_prediction`
         """
         
-        job = client.query(query)
-        job.result()
+        hook.insert_job(
+            configuration={
+                "query": {
+                    "query": query,
+                    "useLegacySql": False,
+                }
+            },
+            location=GCP_REGION,
+        )
         print("✅ Star rating model trained successfully")
 
     @task()
     def train_elite_user_model():
         """Train logistic regression model for elite user prediction."""
-        from google.cloud import bigquery
+        from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
         
-        client = bigquery.Client(project=GCP_PROJECT_ID)
+        hook = BigQueryHook()
 
         query = f"""
         CREATE OR REPLACE MODEL `{GCP_PROJECT_ID}.{BQ_ML_DATASET}.elite_user_model`
@@ -154,16 +161,23 @@ def ml_training_pipeline():
           AND is_current = TRUE
         """
 
-        job = client.query(query)
-        job.result()
+        hook.insert_job(
+            configuration={
+                "query": {
+                    "query": query,
+                    "useLegacySql": False,
+                }
+            },
+            location=GCP_REGION,
+        )
         print("✅ Elite user model trained successfully")
 
     @task()
     def train_business_clusters():
         """Train K-Means clustering model for business segmentation."""
-        from google.cloud import bigquery
+        from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
-        client = bigquery.Client(project=GCP_PROJECT_ID)
+        hook = BigQueryHook()
 
         query = f"""
         CREATE OR REPLACE MODEL `{GCP_PROJECT_ID}.{BQ_ML_DATASET}.business_clusters`
@@ -184,23 +198,30 @@ def ml_training_pipeline():
           AND is_current = TRUE
         """
 
-        job = client.query(query)
-        job.result()
+        hook.insert_job(
+            configuration={
+                "query": {
+                    "query": query,
+                    "useLegacySql": False,
+                }
+            },
+            location=GCP_REGION,
+        )
         print("✅ Business clustering model trained successfully")
 
     @task()
     def evaluate_models() -> dict:
         """Evaluate all trained models and return metrics."""
-        from google.cloud import bigquery
+        from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
-        client = bigquery.Client(project=GCP_PROJECT_ID)
+        hook = BigQueryHook(use_legacy_sql=False)
         results = {}
 
         # Evaluate star rating model
         eval_query = f"""
         SELECT * FROM ML.EVALUATE(MODEL `{GCP_PROJECT_ID}.{BQ_ML_DATASET}.star_rating_model`)
         """
-        df = client.query(eval_query).to_dataframe()
+        df = hook.get_pandas_df(eval_query)
         results["star_rating"] = df.to_dict(orient="records")[0] if len(df) > 0 else {}
         print(f"📊 Star Rating Model: {results['star_rating']}")
 
@@ -208,7 +229,7 @@ def ml_training_pipeline():
         eval_query = f"""
         SELECT * FROM ML.EVALUATE(MODEL `{GCP_PROJECT_ID}.{BQ_ML_DATASET}.elite_user_model`)
         """
-        df = client.query(eval_query).to_dataframe()
+        df = hook.get_pandas_df(eval_query)
         results["elite_user"] = df.to_dict(orient="records")[0] if len(df) > 0 else {}
         print(f"📊 Elite User Model: {results['elite_user']}")
 
@@ -216,7 +237,7 @@ def ml_training_pipeline():
         eval_query = f"""
         SELECT * FROM ML.EVALUATE(MODEL `{GCP_PROJECT_ID}.{BQ_ML_DATASET}.business_clusters`)
         """
-        df = client.query(eval_query).to_dataframe()
+        df = hook.get_pandas_df(eval_query)
         results["business_clusters"] = df.to_dict(orient="records")[0] if len(df) > 0 else {}
         print(f"📊 Business Clusters: {results['business_clusters']}")
 
@@ -225,9 +246,9 @@ def ml_training_pipeline():
     @task()
     def generate_predictions():
         """Generate predictions using the star rating model and save to Gold."""
-        from google.cloud import bigquery
+        from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
-        client = bigquery.Client(project=GCP_PROJECT_ID)
+        hook = BigQueryHook()
 
         query = f"""
         CREATE OR REPLACE TABLE `{GCP_PROJECT_ID}.{BQ_GOLD_DATASET}.star_predictions` AS
@@ -242,9 +263,16 @@ def ml_training_pipeline():
         )
         """
 
-        job = client.query(query)
-        job.result()
-        print(f"✅ Generated predictions: {job.num_dml_affected_rows} rows")
+        hook.insert_job(
+            configuration={
+                "query": {
+                    "query": query,
+                    "useLegacySql": False,
+                }
+            },
+            location=GCP_REGION,
+        )
+        print("✅ Generated predictions successfully")
 
     # ── DAG Flow ──────────────────────────────────────────────────
     create_ml_dataset >> [

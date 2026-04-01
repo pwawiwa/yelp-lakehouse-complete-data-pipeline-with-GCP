@@ -9,10 +9,18 @@ import logging
 from datetime import datetime, timezone
 
 from airflow.utils.email import send_email
+from google.cloud import logging as gcp_logging
 
 logger = logging.getLogger(__name__)
 
 ALERT_EMAIL = "wira.hutomo2@gmail.com"
+
+# Initialize GCP Logging client
+try:
+    logging_client = gcp_logging.Client()
+    logging_client.setup_logging()
+except Exception:
+    logging_client = None
 
 
 def on_failure_callback(context: dict) -> None:
@@ -80,6 +88,18 @@ def on_failure_callback(context: dict) -> None:
     </div>
     """
 
+    # ALWAYS log to Cloud Logging for GCP Metrics/Alerting
+    log_msg = f"PIPELINE_FAILURE|dag={dag_id}|task={task_id}|execution_date={execution_date}|error={str(exception)[:500]}"
+    logger.critical(log_msg)
+    
+    # Explicitly send to GCP if client is available (ensures it reaches Monitoring)
+    if logging_client:
+        try:
+            gcp_logger = logging_client.logger("pipeline-alerts")
+            gcp_logger.log_text(log_msg, severity="CRITICAL")
+        except Exception as e:
+            logger.error(f"Failed to send explicit GCP log: {e}")
+
     try:
         send_email(
             to=ALERT_EMAIL,
@@ -89,11 +109,6 @@ def on_failure_callback(context: dict) -> None:
         logger.info(f"Failure alert sent for {dag_id}.{task_id}")
     except Exception as e:
         logger.error(f"Failed to send failure alert email: {e}")
-        # Log to Cloud Logging as fallback
-        logger.critical(
-            f"PIPELINE_FAILURE|dag={dag_id}|task={task_id}|"
-            f"execution_date={execution_date}|error={str(exception)[:500]}"
-        )
 
 
 def on_retry_callback(context: dict) -> None:

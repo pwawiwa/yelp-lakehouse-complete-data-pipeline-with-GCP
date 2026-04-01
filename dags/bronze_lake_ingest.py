@@ -77,15 +77,14 @@ def bronze_lake_ingest():
     @task()
     def get_available_entities() -> list[str]:
         """Discover which Yelp entities have been uploaded to GCS."""
-        from google.cloud import storage
+        from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
-        client = storage.Client(project=GCP_PROJECT_ID)
-        bucket = client.bucket(GCS_BRONZE_BUCKET)
-
+        hook = GCSHook()
         available = []
         for entity in YELP_ENTITIES:
-            # Check if prefix exists
-            blobs = list(client.list_blobs(bucket, prefix=f"yelp/raw/entity={entity}/", max_results=1))
+            # Check if prefix exists (using prefix check to avoid full list)
+            prefix = f"yelp/raw/entity={entity}/"
+            blobs = hook.list(GCS_BRONZE_BUCKET, prefix=prefix, max_results=1)
             if blobs:
                 available.append(entity)
         
@@ -124,10 +123,6 @@ def bronze_lake_ingest():
                     compliment_profile INT64, compliment_cute INT64, compliment_list INT64, 
                     compliment_note INT64, compliment_plain INT64, compliment_cool INT64, 
                     compliment_funny INT64, compliment_writer INT64, compliment_photos INT64
-                )"""
-            elif entity == "checkin":
-                schema_clause = """(
-                    business_id STRING, date STRING
                 )"""
             
             ddls.append({

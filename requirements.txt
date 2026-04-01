@@ -6,6 +6,7 @@ apache-airflow-providers-google>=11.0.0
 google-cloud-bigquery>=3.20.0
 google-cloud-storage>=2.14.0
 google-cloud-dlp>=3.15.0
+google-cloud-pubsub>=2.19.0
 
 # ── Apache Iceberg ────────────────────────────────────────────────
 pyiceberg[gcsfs]>=0.6.0
@@ -13,8 +14,10 @@ pyiceberg[gcsfs]>=0.6.0
 # ── Utilities ─────────────────────────────────────────────────────
 pandas>=2.0.0
 pyarrow>=15.0.0
+openpyxl>=3.1.0
 smart-open[gcs]>=7.0.0
 
 # ── Self-Healing Agent ────────────────────────────────────────────
 openai>=1.0.0
+google-cloud-logging>=3.10.0
 requests>=2.31.0

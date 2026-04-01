@@ -48,7 +48,7 @@ default_args = {
     "owner": "data-engineering",
     "depends_on_past": False,
     "email": [ALERT_EMAIL],
-    "email_on_failure": False,
+    "email_on_failure": True,
     "email_on_retry": False,
     "retries": 0,
     "retry_delay": timedelta(minutes=5),
